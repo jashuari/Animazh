@@ -27,7 +27,7 @@ async function uploadToSupabase(file: File, sessionId: string): Promise<string> 
 
     // Upload to Supabase Storage
     const { data, error } = await supabase.storage
-      .from('images')
+      .from('upload')
       .upload(filePath, buffer, {
         contentType: file.type,
         cacheControl: '3600',
@@ -40,7 +40,7 @@ async function uploadToSupabase(file: File, sessionId: string): Promise<string> 
 
     // Get the public URL
     const { data: { publicUrl } } = supabase.storage
-      .from('images')
+      .from('upload')
       .getPublicUrl(filePath);
 
     return publicUrl;
