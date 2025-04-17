@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { writeFile, mkdir, readFile } from 'fs/promises';
-import { join } from 'path';
-import { existsSync } from 'fs';
-import os from 'os';
+import { v2 as cloudinary } from 'cloudinary';
+
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 async function verifyRecaptcha(token: string) {
   const secretKey = process.env.RECAPTCHA_SECRET_KEY;
@@ -18,14 +22,25 @@ async function verifyRecaptcha(token: string) {
   return data.success;
 }
 
-// Function to get the appropriate upload directory
-function getUploadDir() {
-  if (process.env.NODE_ENV === 'production') {
-    // In production, use the temp directory
-    return join(os.tmpdir(), 'uploads');
+async function uploadToCloudinary(file: File, sessionId: string): Promise<string> {
+  try {
+    // Convert File to base64
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const base64Data = buffer.toString('base64');
+    const dataURI = `data:${file.type};base64,${base64Data}`;
+
+    // Upload to Cloudinary
+    const result = await cloudinary.uploader.upload(dataURI, {
+      folder: `animazh/${sessionId}`,
+      resource_type: 'auto',
+    });
+
+    return result.secure_url;
+  } catch (error) {
+    console.error('Error uploading to Cloudinary:', error);
+    throw new Error('Failed to upload image to Cloudinary');
   }
-  // In development, use the local uploads directory
-  return join(process.cwd(), 'uploads');
 }
 
 export async function POST(request: NextRequest) {
@@ -57,83 +72,61 @@ export async function POST(request: NextRequest) {
     const totalChunks = parseInt(formData.get('totalChunks') as string);
     const totalImages = parseInt(formData.get('totalImages') as string);
     const sessionId = formData.get('sessionId') as string || `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-    
-    // Get the appropriate upload directory
-    const baseUploadDir = getUploadDir();
-    const uploadDir = join(baseUploadDir, sessionId);
 
-    try {
-      // Ensure the base upload directory exists
-      if (!existsSync(baseUploadDir)) {
-        await mkdir(baseUploadDir, { recursive: true });
+    // Process images in this chunk
+    const uploadedUrls = [];
+    let imageIndex = chunkIndex * 2; // Since we're using chunks of 2
+    
+    while (formData.has(`image${imageIndex}`)) {
+      const image = formData.get(`image${imageIndex}`) as File;
+      try {
+        const imageUrl = await uploadToCloudinary(image, sessionId);
+        uploadedUrls.push({
+          index: imageIndex,
+          url: imageUrl
+        });
+      } catch (error) {
+        console.error(`Error uploading image ${imageIndex}:`, error);
+        return NextResponse.json(
+          { success: false, error: `Failed to upload image ${imageIndex}` },
+          { status: 500 }
+        );
       }
-      // Create session-specific directory
-      if (!existsSync(uploadDir)) {
-        await mkdir(uploadDir, { recursive: true });
-      }
-    } catch (error) {
-      console.error('Error creating directories:', error);
-      return NextResponse.json(
-        { success: false, error: 'Failed to create upload directory' },
-        { status: 500 }
-      );
+      imageIndex++;
     }
 
-    const metadataPath = join(uploadDir, 'metadata.json');
-    let metadata;
-
-    // Initialize or load metadata
+    // Store metadata in Cloudinary as a JSON file if this is the first chunk
     if (chunkIndex === 0) {
-      metadata = {
+      const metadata = {
         name,
         email,
         styleStrength,
         watermark,
         totalImages,
         totalChunks,
-        processedChunks: [],
         timestamp: new Date().toISOString(),
         sessionId,
       };
-    } else {
+
       try {
-        metadata = JSON.parse(await readFile(metadataPath, 'utf-8'));
+        await cloudinary.uploader.upload(`data:application/json;base64,${Buffer.from(JSON.stringify(metadata)).toString('base64')}`, {
+          folder: `animazh/${sessionId}`,
+          public_id: 'metadata',
+          resource_type: 'raw'
+        });
       } catch (error) {
-        // If metadata doesn't exist for a non-first chunk, something went wrong
-        return NextResponse.json(
-          { success: false, error: 'Upload session not found' },
-          { status: 400 }
-        );
+        console.error('Error uploading metadata:', error);
+        // Continue even if metadata upload fails
       }
     }
 
-    // Process images in this chunk
-    const chunkImages = [];
-    let imageIndex = chunkIndex * 2; // Since we're using chunks of 2
-    while (formData.has(`image${imageIndex}`)) {
-      const image = formData.get(`image${imageIndex}`) as File;
-      const buffer = Buffer.from(await image.arrayBuffer());
-      const filename = `image-${imageIndex}.${image.name.split('.').pop()}`;
-      await writeFile(join(uploadDir, filename), buffer);
-      chunkImages.push(filename);
-      imageIndex++;
-    }
-
-    // Update metadata
-    if (!metadata.processedChunks.includes(chunkIndex)) {
-      metadata.processedChunks.push(chunkIndex);
-      metadata.processedChunks.sort((a: number, b: number) => a - b);
-    }
-    await writeFile(metadataPath, JSON.stringify(metadata, null, 2));
-
-    // If this is the last chunk, trigger the image processing
-    if (chunkIndex === totalChunks - 1 && metadata.processedChunks.length === totalChunks) {
-      // Here you would trigger your image processing pipeline
-      // For now, we'll just return success
+    // If this is the last chunk, we can trigger the image processing
+    if (chunkIndex === totalChunks - 1) {
       return NextResponse.json({
         success: true,
         message: 'All chunks received successfully',
         sessionId,
+        uploadedUrls
       });
     }
 
@@ -141,7 +134,7 @@ export async function POST(request: NextRequest) {
       success: true,
       message: `Chunk ${chunkIndex + 1} of ${totalChunks} received`,
       sessionId,
-      processedChunks: metadata.processedChunks,
+      uploadedUrls
     });
 
   } catch (error) {
