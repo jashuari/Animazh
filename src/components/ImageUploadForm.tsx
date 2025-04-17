@@ -395,6 +395,7 @@ const ImageUploadForm = () => {
         const formData = new FormData();
         formData.append('name', name);
         formData.append('email', email);
+        formData.append('recaptchaToken', recaptchaValue || '');
         chunk.forEach((file, index) => {
           formData.append(`image${i * chunkSize + index}`, file);
         });
@@ -1072,7 +1073,7 @@ const ImageUploadForm = () => {
         <div className="flex justify-center mb-4">
           <ReCAPTCHA
             ref={recaptchaRef}
-            sitekey="YOUR_RECAPTCHA_SITE_KEY"
+            sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || ''}
             onChange={(value) => setRecaptchaValue(value)}
             theme="light"
           />

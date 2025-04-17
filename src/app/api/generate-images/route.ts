@@ -3,9 +3,41 @@ import { writeFile, mkdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
 
+async function verifyRecaptcha(token: string) {
+  const secretKey = process.env.RECAPTCHA_SECRET_KEY;
+  const response = await fetch('https://www.google.com/recaptcha/api/siteverify', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: `secret=${secretKey}&response=${token}`,
+  });
+  
+  const data = await response.json();
+  return data.success;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
+    const recaptchaToken = formData.get('recaptchaToken') as string;
+    
+    // Verify reCAPTCHA token
+    if (!recaptchaToken) {
+      return NextResponse.json(
+        { success: false, error: 'reCAPTCHA verification required' },
+        { status: 400 }
+      );
+    }
+
+    const isValidRecaptcha = await verifyRecaptcha(recaptchaToken);
+    if (!isValidRecaptcha) {
+      return NextResponse.json(
+        { success: false, error: 'reCAPTCHA verification failed' },
+        { status: 400 }
+      );
+    }
+
     const name = formData.get('name') as string;
     const email = formData.get('email') as string;
     const styleStrength = formData.get('styleStrength') as string;
