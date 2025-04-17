@@ -55,20 +55,23 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const recaptchaToken = formData.get('recaptchaToken') as string;
     
-    // Verify reCAPTCHA token
-    if (!recaptchaToken) {
-      return NextResponse.json(
-        { success: false, error: 'reCAPTCHA verification required' },
-        { status: 400 }
-      );
-    }
+    // Skip reCAPTCHA verification on localhost
+    const isLocalhost = process.env.NODE_ENV === 'development';
+    if (!isLocalhost) {
+      if (!recaptchaToken) {
+        return NextResponse.json(
+          { success: false, error: 'reCAPTCHA verification required' },
+          { status: 400 }
+        );
+      }
 
-    const isValidRecaptcha = await verifyRecaptcha(recaptchaToken);
-    if (!isValidRecaptcha) {
-      return NextResponse.json(
-        { success: false, error: 'reCAPTCHA verification failed' },
-        { status: 400 }
-      );
+      const isValidRecaptcha = await verifyRecaptcha(recaptchaToken);
+      if (!isValidRecaptcha) {
+        return NextResponse.json(
+          { success: false, error: 'reCAPTCHA verification failed' },
+          { status: 400 }
+        );
+      }
     }
 
     const name = formData.get('name') as string;
