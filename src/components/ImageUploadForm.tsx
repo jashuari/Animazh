@@ -33,6 +33,7 @@ const ImageUploadForm = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const recaptchaRef = useRef<ReCAPTCHA>(null);
+  const isLocalhost = process.env.NODE_ENV === 'development';
 
   const topTestimonials = [
     {
@@ -338,11 +339,11 @@ const ImageUploadForm = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!files.length || !name || !email || !recaptchaValue) {
+    if (!files.length || !name || !email || (!recaptchaValue && !isLocalhost)) {
       toast.error(
         <div className="flex flex-col space-y-1">
           <div className="font-medium">Ju lutem plotësoni të gjitha fushat e kërkuara</div>
-          <div className="text-sm">{!recaptchaValue ? "Ju lutem verifikoni që nuk jeni robot" : "Plotësoni të gjitha fushat"}</div>
+          <div className="text-sm">{!recaptchaValue && !isLocalhost ? "Ju lutem verifikoni që nuk jeni robot" : "Plotësoni të gjitha fushat"}</div>
         </div>,
         {
           duration: 4000,
@@ -1070,14 +1071,17 @@ const ImageUploadForm = () => {
           </div>
         </div>
 
-        <div className="flex justify-center mb-4">
-          <ReCAPTCHA
-            ref={recaptchaRef}
-            sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || ''}
-            onChange={(value) => setRecaptchaValue(value)}
-            theme="light"
-          />
-        </div>
+        {/* Only show reCAPTCHA in production */}
+        {!isLocalhost && (
+          <div className="flex justify-center mb-4">
+            <ReCAPTCHA
+              ref={recaptchaRef}
+              sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || ''}
+              onChange={(value) => setRecaptchaValue(value)}
+              theme="light"
+            />
+          </div>
+        )}
 
         <button
           type="submit"

@@ -1,160 +1,204 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/utils/supabase';
+import { supabaseAdmin } from '@/utils/supabase';
 
-async function verifyRecaptcha(token: string) {
-  const secretKey = process.env.RECAPTCHA_SECRET_KEY;
-  const response = await fetch('https://www.google.com/recaptcha/api/siteverify', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: `secret=${secretKey}&response=${token}`,
-  });
-  
-  const data = await response.json();
-  return data.success;
+async function verifyRecaptcha(token: string): Promise<boolean> {
+  // Skip reCAPTCHA verification in development
+  if (process.env.NODE_ENV === 'development') {
+    return true;
+  }
+
+  try {
+    const response = await fetch('https://www.google.com/recaptcha/api/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${token}`
+    });
+    const data = await response.json();
+    return data.success;
+  } catch (error) {
+    console.error('Error verifying reCAPTCHA:', error);
+    return false;
+  }
 }
 
-async function uploadToSupabase(file: File, sessionId: string): Promise<string> {
+async function saveImageToDatabase(
+  file: File,
+  sessionId: string,
+  groupId: string,
+  imageIndex: number,
+  name: string,
+  email: string,
+  styleStrength: number,
+  watermark: boolean,
+  totalImages: number
+): Promise<void> {
   try {
     // Convert File to buffer
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // Generate a unique filename
-    const filename = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}.${file.name.split('.').pop()}`;
-    const filePath = `${sessionId}/${filename}`;
-
-    // Upload to Supabase Storage
-    const { data, error } = await supabase.storage
-      .from('upload')
-      .upload(filePath, buffer, {
-        contentType: file.type,
-        cacheControl: '3600',
-        upsert: false
+    // Insert new record for each image
+    console.log(`Inserting record for image ${imageIndex + 1} of ${totalImages}`);
+    const { error: dbError } = await supabaseAdmin
+      .from('images')
+      .insert({
+        session_id: sessionId,
+        group_id: groupId,
+        name,
+        email,
+        style_strength: styleStrength,
+        watermark,
+        total_images: totalImages,
+        image_index: imageIndex,
+        status: 'processing',
+        image_data: buffer,
+        file_size: file.size,
+        mime_type: file.type,
+        metadata: {
+          uploadStarted: new Date().toISOString(),
+          fileName: file.name,
+          originalIndex: imageIndex
+        }
       });
 
-    if (error) {
-      throw error;
+    if (dbError) {
+      console.error('Error saving image to database:', dbError);
+      throw new Error(`Failed to save image: ${dbError.message}`);
     }
 
-    // Get the public URL
-    const { data: { publicUrl } } = supabase.storage
-      .from('upload')
-      .getPublicUrl(filePath);
-
-    return publicUrl;
+    console.log(`Image ${imageIndex + 1} saved successfully to database`);
   } catch (error) {
-    console.error('Error uploading to Supabase:', error);
-    throw new Error('Failed to upload image to Supabase');
+    console.error('Error in saveImageToDatabase:', error);
+    if (error instanceof Error) {
+      throw new Error(`Failed to save image: ${error.message}`);
+    }
+    throw new Error('Failed to save image: Unknown error');
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
-    const recaptchaToken = formData.get('recaptchaToken') as string;
     
-    // Skip reCAPTCHA verification on localhost
-    const isLocalhost = process.env.NODE_ENV === 'development';
-    if (!isLocalhost) {
-      if (!recaptchaToken) {
-        return NextResponse.json(
-          { success: false, error: 'reCAPTCHA verification required' },
-          { status: 400 }
-        );
-      }
-
-      const isValidRecaptcha = await verifyRecaptcha(recaptchaToken);
-      if (!isValidRecaptcha) {
-        return NextResponse.json(
-          { success: false, error: 'reCAPTCHA verification failed' },
-          { status: 400 }
-        );
-      }
-    }
-
+    // Detailed debug logging
+    console.log('Received form data keys:', Array.from(formData.keys()));
+    console.log('Form data values:', {
+      name: formData.get('name'),
+      email: formData.get('email'),
+      styleStrength: formData.get('styleStrength'),
+      watermark: formData.get('watermark'),
+      totalImages: formData.get('totalImages')
+    });
+    
     const name = formData.get('name') as string;
     const email = formData.get('email') as string;
-    const styleStrength = formData.get('styleStrength') as string;
+    const styleStrength = parseInt(formData.get('styleStrength') as string) || 50;
     const watermark = formData.get('watermark') === 'true';
-    const chunkIndex = parseInt(formData.get('chunkIndex') as string);
-    const totalChunks = parseInt(formData.get('totalChunks') as string);
     const totalImages = parseInt(formData.get('totalImages') as string);
-    const sessionId = formData.get('sessionId') as string || `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+    const sessionId = formData.get('sessionId') as string || crypto.randomUUID();
+    const groupId = formData.get('groupId') as string || crypto.randomUUID();
+    const recaptchaToken = formData.get('recaptchaToken') as string;
 
-    // Process images in this chunk
-    const uploadedUrls = [];
-    let imageIndex = chunkIndex * 2; // Since we're using chunks of 2
-    
-    while (formData.has(`image${imageIndex}`)) {
-      const image = formData.get(`image${imageIndex}`) as File;
+    // Verify reCAPTCHA token (will be skipped in development)
+    const isValidRecaptcha = await verifyRecaptcha(recaptchaToken);
+    if (!isValidRecaptcha) {
+      return NextResponse.json({ error: 'Invalid reCAPTCHA token' }, { status: 400 });
+    }
+
+    // Validate required fields
+    if (!name || !email || !sessionId) {
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+
+    if (!totalImages || totalImages <= 0) {
+      return NextResponse.json({ error: 'Invalid totalImages value' }, { status: 400 });
+    }
+
+    // Process each image
+    const uploadedFiles = [];
+    const errors = [];
+
+    // Find all image files in formData
+    const imageFiles = Array.from(formData.entries())
+      .filter(([key]) => key.startsWith('image'))
+      .map(([key, value]) => ({ key, value }));
+
+    console.log(`Found ${imageFiles.length} image files to process`);
+
+    for (const { key, value } of imageFiles) {
+      if (!value || !(value instanceof File)) {
+        errors.push(`Invalid or missing file for ${key}`);
+        continue;
+      }
+
       try {
-        const imageUrl = await uploadToSupabase(image, sessionId);
-        uploadedUrls.push({
-          index: imageIndex,
-          url: imageUrl
+        const imageIndex = parseInt(key.replace('image', ''));
+        
+        // Log file details
+        console.log(`Processing file ${imageIndex + 1}:`, {
+          key,
+          name: value.name,
+          type: value.type,
+          size: value.size
+        });
+
+        // Save the image data to the database
+        await saveImageToDatabase(
+          value,
+          sessionId,
+          groupId,
+          imageIndex,
+          name,
+          email,
+          styleStrength,
+          watermark,
+          totalImages
+        );
+
+        uploadedFiles.push({
+          name: value.name,
+          index: imageIndex
         });
       } catch (error) {
-        console.error(`Error uploading image ${imageIndex}:`, error);
-        return NextResponse.json(
-          { success: false, error: `Failed to upload image ${imageIndex}` },
-          { status: 500 }
-        );
-      }
-      imageIndex++;
-    }
-
-    // Store metadata in Supabase if this is the first chunk
-    if (chunkIndex === 0) {
-      const metadata = {
-        name,
-        email,
-        styleStrength,
-        watermark,
-        totalImages,
-        totalChunks,
-        timestamp: new Date().toISOString(),
-        sessionId,
-      };
-
-      try {
-        // Store metadata in Supabase database
-        const { error } = await supabase
-          .from('upload_sessions')
-          .insert([metadata]);
-
-        if (error) {
-          console.error('Error storing metadata:', error);
-          // Continue even if metadata storage fails
-        }
-      } catch (error) {
-        console.error('Error storing metadata:', error);
-        // Continue even if metadata storage fails
+        console.error(`Error processing ${key}:`, error);
+        errors.push(`Failed to process ${key}: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
     }
 
-    // If this is the last chunk, we can trigger the image processing
-    if (chunkIndex === totalChunks - 1) {
-      return NextResponse.json({
-        success: true,
-        message: 'All chunks received successfully',
-        sessionId,
-        uploadedUrls
-      });
+    // Update metadata for the group once all files are processed
+    if (uploadedFiles.length > 0) {
+      const { error: updateError } = await supabaseAdmin
+        .from('images')
+        .update({
+          metadata: {
+            uploadCompleted: new Date().toISOString(),
+            totalUploaded: uploadedFiles.length
+          }
+        })
+        .eq('group_id', groupId);
+
+      if (updateError) {
+        console.error('Error updating group metadata:', updateError);
+        errors.push(`Failed to update group metadata: ${updateError.message}`);
+      }
     }
 
+    // Return response with status of all uploads
     return NextResponse.json({
-      success: true,
-      message: `Chunk ${chunkIndex + 1} of ${totalChunks} received`,
+      success: errors.length === 0 && uploadedFiles.length === totalImages,
+      groupId,
       sessionId,
-      uploadedUrls
+      uploadedFiles,
+      totalProcessed: uploadedFiles.length,
+      expectedTotal: totalImages,
+      errors: errors.length > 0 ? errors : undefined,
+      message: `Uploaded ${uploadedFiles.length} of ${totalImages} images successfully`
     });
 
   } catch (error) {
-    console.error('Error processing upload:', error);
+    console.error('Error in POST handler:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to process upload' },
+      { error: error instanceof Error ? error.message : 'An unknown error occurred' },
       { status: 500 }
     );
   }
