@@ -1,12 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { v2 as cloudinary } from 'cloudinary';
-
-// Configure Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+import { supabase } from '@/utils/supabase';
 
 async function verifyRecaptcha(token: string) {
   const secretKey = process.env.RECAPTCHA_SECRET_KEY;
@@ -22,24 +15,38 @@ async function verifyRecaptcha(token: string) {
   return data.success;
 }
 
-async function uploadToCloudinary(file: File, sessionId: string): Promise<string> {
+async function uploadToSupabase(file: File, sessionId: string): Promise<string> {
   try {
-    // Convert File to base64
+    // Convert File to buffer
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    const base64Data = buffer.toString('base64');
-    const dataURI = `data:${file.type};base64,${base64Data}`;
 
-    // Upload to Cloudinary
-    const result = await cloudinary.uploader.upload(dataURI, {
-      folder: `animazh/${sessionId}`,
-      resource_type: 'auto',
-    });
+    // Generate a unique filename
+    const filename = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}.${file.name.split('.').pop()}`;
+    const filePath = `${sessionId}/${filename}`;
 
-    return result.secure_url;
+    // Upload to Supabase Storage
+    const { data, error } = await supabase.storage
+      .from('images')
+      .upload(filePath, buffer, {
+        contentType: file.type,
+        cacheControl: '3600',
+        upsert: false
+      });
+
+    if (error) {
+      throw error;
+    }
+
+    // Get the public URL
+    const { data: { publicUrl } } = supabase.storage
+      .from('images')
+      .getPublicUrl(filePath);
+
+    return publicUrl;
   } catch (error) {
-    console.error('Error uploading to Cloudinary:', error);
-    throw new Error('Failed to upload image to Cloudinary');
+    console.error('Error uploading to Supabase:', error);
+    throw new Error('Failed to upload image to Supabase');
   }
 }
 
@@ -80,7 +87,7 @@ export async function POST(request: NextRequest) {
     while (formData.has(`image${imageIndex}`)) {
       const image = formData.get(`image${imageIndex}`) as File;
       try {
-        const imageUrl = await uploadToCloudinary(image, sessionId);
+        const imageUrl = await uploadToSupabase(image, sessionId);
         uploadedUrls.push({
           index: imageIndex,
           url: imageUrl
@@ -95,7 +102,7 @@ export async function POST(request: NextRequest) {
       imageIndex++;
     }
 
-    // Store metadata in Cloudinary as a JSON file if this is the first chunk
+    // Store metadata in Supabase if this is the first chunk
     if (chunkIndex === 0) {
       const metadata = {
         name,
@@ -109,14 +116,18 @@ export async function POST(request: NextRequest) {
       };
 
       try {
-        await cloudinary.uploader.upload(`data:application/json;base64,${Buffer.from(JSON.stringify(metadata)).toString('base64')}`, {
-          folder: `animazh/${sessionId}`,
-          public_id: 'metadata',
-          resource_type: 'raw'
-        });
+        // Store metadata in Supabase database
+        const { error } = await supabase
+          .from('upload_sessions')
+          .insert([metadata]);
+
+        if (error) {
+          console.error('Error storing metadata:', error);
+          // Continue even if metadata storage fails
+        }
       } catch (error) {
-        console.error('Error uploading metadata:', error);
-        // Continue even if metadata upload fails
+        console.error('Error storing metadata:', error);
+        // Continue even if metadata storage fails
       }
     }
 
