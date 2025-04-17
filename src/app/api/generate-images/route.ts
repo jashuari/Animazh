@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { writeFile, mkdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import os from 'os';
 
 async function verifyRecaptcha(token: string) {
   const secretKey = process.env.RECAPTCHA_SECRET_KEY;
@@ -15,6 +16,16 @@ async function verifyRecaptcha(token: string) {
   
   const data = await response.json();
   return data.success;
+}
+
+// Function to get the appropriate upload directory
+function getUploadDir() {
+  if (process.env.NODE_ENV === 'production') {
+    // In production, use the temp directory
+    return join(os.tmpdir(), 'uploads');
+  }
+  // In development, use the local uploads directory
+  return join(process.cwd(), 'uploads');
 }
 
 export async function POST(request: NextRequest) {
@@ -46,10 +57,26 @@ export async function POST(request: NextRequest) {
     const totalChunks = parseInt(formData.get('totalChunks') as string);
     const totalImages = parseInt(formData.get('totalImages') as string);
     const sessionId = formData.get('sessionId') as string || `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-    const uploadDir = join(process.cwd(), 'uploads', sessionId);
     
-    if (!existsSync(uploadDir)) {
-      await mkdir(uploadDir, { recursive: true });
+    // Get the appropriate upload directory
+    const baseUploadDir = getUploadDir();
+    const uploadDir = join(baseUploadDir, sessionId);
+
+    try {
+      // Ensure the base upload directory exists
+      if (!existsSync(baseUploadDir)) {
+        await mkdir(baseUploadDir, { recursive: true });
+      }
+      // Create session-specific directory
+      if (!existsSync(uploadDir)) {
+        await mkdir(uploadDir, { recursive: true });
+      }
+    } catch (error) {
+      console.error('Error creating directories:', error);
+      return NextResponse.json(
+        { success: false, error: 'Failed to create upload directory' },
+        { status: 500 }
+      );
     }
 
     const metadataPath = join(uploadDir, 'metadata.json');

@@ -3,7 +3,7 @@
 # dependencies
 /node_modules
 /.pnp
-.pnp.*
+.pnp.js
 .yarn/*
 !.yarn/patches
 !.yarn/plugins
@@ -44,3 +44,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# uploads directory
+/uploads/*
+!uploads/.gitkeep
