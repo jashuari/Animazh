@@ -1,7 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/utils/supabase';
 
+const RECAPTCHA_SECRET_KEY = process.env.RECAPTCHA_SECRET_KEY;
+const RECAPTCHA_VERIFY_URL = 'https://www.google.com/recaptcha/api/siteverify';
 
+async function verifyRecaptcha(token: string) {
+  try {
+    const verificationResponse = await fetch(RECAPTCHA_VERIFY_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: `secret=${RECAPTCHA_SECRET_KEY}&response=${token}`,
+    });
+
+    const verificationResult = await verificationResponse.json();
+    return {
+      success: verificationResult.success && verificationResult.score >= 0.5,
+      score: verificationResult.score,
+    };
+  } catch (error) {
+    console.error('reCAPTCHA verification error:', error);
+    return { success: false, score: 0 };
+  }
+}
 
 async function saveImageToDatabase(
   file: File,
@@ -61,7 +83,28 @@ async function saveImageToDatabase(
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
-    
+    const recaptchaToken = formData.get('recaptchaToken') as string;
+
+    // Verify reCAPTCHA first
+    if (!recaptchaToken) {
+      return NextResponse.json(
+        { success: false, error: 'reCAPTCHA token is required' },
+        { status: 400 }
+      );
+    }
+
+    const recaptchaVerification = await verifyRecaptcha(recaptchaToken);
+    if (!recaptchaVerification.success) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'reCAPTCHA verification failed',
+          score: recaptchaVerification.score 
+        },
+        { status: 400 }
+      );
+    }
+
     // Detailed debug logging
     console.log('Received form data keys:', Array.from(formData.keys()));
     console.log('Form data values:', {

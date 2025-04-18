@@ -5,6 +5,16 @@ import Image from 'next/image';
 import { CheckIcon } from '@heroicons/react/24/outline';
 import toast, { Toaster } from 'react-hot-toast';
 import ReactConfetti from 'react-confetti';
+import Script from 'next/script';
+
+declare global {
+  interface Window {
+    grecaptcha: {
+      ready: (callback: () => void) => void;
+      execute: (siteKey: string, options: { action: string }) => Promise<string>;
+    };
+  }
+}
 
 const styles = `
   @keyframes progress {
@@ -15,6 +25,8 @@ const styles = `
     animation: progress 2s ease-in-out infinite;
   }
 `;
+
+const RECAPTCHA_SITE_KEY = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY;
 
 const ImageUploadForm = () => {
   const [name, setName] = useState('');
@@ -151,6 +163,17 @@ const ImageUploadForm = () => {
     
     // Cleanup
     return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    // Load reCAPTCHA script
+    const script = document.createElement('script');
+    script.src = `https://www.google.com/recaptcha/api.js?render=${RECAPTCHA_SITE_KEY}`;
+    document.body.appendChild(script);
+
+    return () => {
+      document.body.removeChild(script);
+    };
   }, []);
 
   const getMaxImagesForPackage = (packageType: string) => {
@@ -418,10 +441,24 @@ const ImageUploadForm = () => {
     loadingToast: string;
   }
 
+  const executeRecaptcha = async () => {
+    try {
+      if (!RECAPTCHA_SITE_KEY) {
+        throw new Error('reCAPTCHA site key is not defined');
+      }
+      const token = await window.grecaptcha.execute(RECAPTCHA_SITE_KEY, { action: 'submit_form' });
+      return token;
+    } catch (error) {
+      console.error('reCAPTCHA error:', error);
+      throw new Error('Failed to execute reCAPTCHA');
+    }
+  };
+
   const uploadImage = async (
     index: number,
     retryCount = 0,
-    uploadState: UploadState
+    uploadState: UploadState,
+    recaptchaToken: string
   ): Promise<boolean> => {
     const maxRetryDelay = 10000;
     const baseDelay = 2000;
@@ -441,6 +478,7 @@ const ImageUploadForm = () => {
       formData.append('watermark', watermark.toString());
       formData.append('imageIndex', index.toString());
       formData.append('totalImages', files.length.toString());
+      formData.append('recaptchaToken', recaptchaToken);
       
       if (uploadState.sessionId) {
         formData.append('sessionId', uploadState.sessionId);
@@ -548,6 +586,9 @@ const ImageUploadForm = () => {
     );
 
     try {
+      // Get reCAPTCHA token
+      const recaptchaToken = await executeRecaptcha();
+
       const uploadState: UploadState = {
         sessionId: '',
         uploadResults: [],
@@ -560,7 +601,7 @@ const ImageUploadForm = () => {
       for (let i = 0; i < files.length; i += batchSize) {
         const batch = files.slice(i, i + batchSize);
         await Promise.all(
-          batch.map((_, batchIndex) => uploadImage(i + batchIndex, 0, uploadState))
+          batch.map((_, batchIndex) => uploadImage(i + batchIndex, 0, uploadState, recaptchaToken))
         );
 
         // Update progress toast
@@ -593,7 +634,7 @@ const ImageUploadForm = () => {
       // Handle retries with increasing delays
       while (uploadState.failedUploads.length > 0) {
         const { index, retries } = uploadState.failedUploads.shift()!;
-        const success = await uploadImage(index, retries, uploadState);
+        const success = await uploadImage(index, retries, uploadState, recaptchaToken);
         if (!success && retries < maxRetries) {
           uploadState.failedUploads.push({ index, retries: retries + 1 });
         }
@@ -677,6 +718,10 @@ const ImageUploadForm = () => {
 
   return (
     <>
+      <Script
+        src={`https://www.google.com/recaptcha/api.js?render=${RECAPTCHA_SITE_KEY}`}
+        strategy="beforeInteractive"
+      />
       {/* Background wrapper */}
       <div className="fixed inset-0 min-h-screen w-full overflow-hidden -z-10">
         {/* Pattern overlay */}
