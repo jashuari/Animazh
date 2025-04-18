@@ -31,6 +31,7 @@ const ImageUploadForm = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const isLocalhost = process.env.NODE_ENV === 'development';
+  const maxRetries = 3;
 
   const topTestimonials = [
     {
@@ -164,11 +165,23 @@ const ImageUploadForm = () => {
     const selectedFiles = Array.from(e.target.files || []);
     const maxImages = getMaxImagesForPackage(selectedPackage);
     
-    if (selectedFiles.length + files.length > maxImages) {
+    // Calculate total number of files after adding new ones
+    const totalFiles = files.length + selectedFiles.length;
+    
+    if (totalFiles > maxImages) {
       toast.error(
         <div className="flex flex-col space-y-1">
           <div className="font-medium">Kufizim i paketës!</div>
-          <div className="text-sm">Paketa juaj lejon maksimumi {maxImages} foto. Ju lutem përmirësoni paketën për më shumë.</div>
+          <div className="text-sm">
+            Paketa juaj lejon maksimumi {maxImages} foto. 
+            {files.length > 0 
+              ? ` Ju keni ${files.length} foto të zgjedhura dhe po provoni të shtoni ${selectedFiles.length} të tjera.`
+              : ''
+            }
+          </div>
+          <div className="text-sm font-medium text-blue-600 mt-1">
+            Ju lutem përmirësoni paketën për më shumë ose fshini disa foto ekzistuese.
+          </div>
         </div>,
         {
           duration: 4000,
@@ -217,6 +230,11 @@ const ImageUploadForm = () => {
     });
 
     if (validFiles.length > 0) {
+      // Reset the file input to allow selecting the same files again if needed
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      
       validFiles.forEach(file => {
         const reader = new FileReader();
         reader.onloadend = () => {
@@ -310,7 +328,10 @@ const ImageUploadForm = () => {
       toast.error(
         <div className="flex flex-col space-y-1">
           <div className="font-medium">Kufizim i paketës së re!</div>
-          <div className="text-sm">Ju keni {files.length} foto të zgjedhura. Paketa e re lejon vetëm {maxImages} foto.</div>
+          <div className="text-sm">
+            Ju keni {files.length} foto të zgjedhura. Paketa e re lejon vetëm {maxImages} foto.
+            Ju lutem fshini disa foto para se të ndryshoni paketën.
+          </div>
         </div>,
         {
           duration: 4000,
@@ -332,6 +353,157 @@ const ImageUploadForm = () => {
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
+  };
+
+  const compressImage = async (file: File): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = document.createElement('img');
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Failed to get canvas context'));
+            return;
+          }
+
+          // Calculate new dimensions while maintaining aspect ratio
+          const maxWidth = 1920;
+          const maxHeight = 1920;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > maxWidth) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            }
+          } else {
+            if (height > maxHeight) {
+              width = Math.round((width * maxHeight) / height);
+              height = maxHeight;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+
+          // Draw and compress image
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                resolve(blob);
+              } else {
+                reject(new Error('Failed to compress image'));
+              }
+            },
+            'image/jpeg',
+            0.8
+          );
+        };
+        img.onerror = () => reject(new Error('Failed to load image'));
+      };
+      reader.onerror = () => reject(new Error('Failed to read file'));
+    });
+  };
+
+  interface UploadState {
+    sessionId: string;
+    uploadResults: any[];
+    failedUploads: Array<{ index: number; retries: number }>;
+    loadingToast: string;
+  }
+
+  const uploadImage = async (
+    index: number,
+    retryCount = 0,
+    uploadState: UploadState
+  ): Promise<boolean> => {
+    const maxRetryDelay = 10000;
+    const baseDelay = 2000;
+    const currentDelay = Math.min(baseDelay * Math.pow(2, retryCount), maxRetryDelay);
+    
+    try {
+      const compressedImageBlob = await compressImage(files[index]);
+      const compressedImageFile = new File([compressedImageBlob], files[index].name, {
+        type: 'image/jpeg'
+      });
+
+      const formData = new FormData();
+      formData.append('name', name);
+      formData.append('email', email);
+      formData.append(`image${index}`, compressedImageFile);
+      formData.append('styleStrength', styleStrength);
+      formData.append('watermark', watermark.toString());
+      formData.append('imageIndex', index.toString());
+      formData.append('totalImages', files.length.toString());
+      
+      if (uploadState.sessionId) {
+        formData.append('sessionId', uploadState.sessionId);
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+
+      try {
+        const response = await fetch('/api/generate-images', {
+          method: 'POST',
+          body: formData,
+          signal: controller.signal
+        });
+
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+          throw new Error(`Error uploading image ${index + 1}: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        uploadState.uploadResults.push(result);
+        
+        if (!uploadState.sessionId && result.sessionId) {
+          uploadState.sessionId = result.sessionId;
+        }
+
+        return true;
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (error) {
+      console.error(`Error uploading image ${index + 1}:`, error);
+      
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log(`Upload timeout for image ${index + 1}, retrying...`);
+      }
+      
+      if (retryCount < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, currentDelay));
+        uploadState.failedUploads.push({ index, retries: retryCount + 1 });
+        return false;
+      }
+
+      toast.error(
+        <div className="flex flex-col space-y-1">
+          <div className="font-medium">Nuk u arrit të ngarkohej imazhi {index + 1}</div>
+          <div className="text-sm">Ju lutemi provoni përsëri më vonë</div>
+        </div>,
+        {
+          duration: 3000,
+          position: 'top-center',
+          style: {
+            background: '#FEE2E2',
+            color: '#991B1B',
+            padding: '16px',
+            borderRadius: '10px',
+          },
+        }
+      );
+      return false;
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -358,10 +530,9 @@ const ImageUploadForm = () => {
 
     const loadingToast = toast.loading(
       <div className="flex flex-col space-y-2">
-        <div className="font-medium">Duke përpunuar imazhet tuaja...</div>
-        <div className="text-sm opacity-90">Kjo mund të marrë disa sekonda</div>
-        <div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden">
-          <div className="h-full bg-blue-600 animate-progress"></div>
+        <div className="font-medium">Duke ngarkuar imazhet...</div>
+        <div className="text-sm opacity-90">
+          0 nga {files.length} imazhe të ngarkuara
         </div>
       </div>,
       {
@@ -377,122 +548,104 @@ const ImageUploadForm = () => {
     );
 
     try {
-      // Upload one image at a time to avoid payload size issues
-      let sessionId = '';
-      const uploadResults = [];
-      const totalFiles = files.length;
+      const uploadState: UploadState = {
+        sessionId: '',
+        uploadResults: [],
+        failedUploads: [],
+        loadingToast: loadingToast
+      };
 
-      for (let i = 0; i < totalFiles; i++) {
-        const formData = new FormData();
-        formData.append('name', name);
-        formData.append('email', email);
-        formData.append(`image${i}`, files[i]);
-        formData.append('styleStrength', styleStrength);
-        formData.append('watermark', watermark.toString());
-        formData.append('imageIndex', i.toString());
-        formData.append('totalImages', totalFiles.toString());
-        
-        if (sessionId) {
-          formData.append('sessionId', sessionId);
-        }
+      // Process images in smaller batches
+      const batchSize = 3;
+      for (let i = 0; i < files.length; i += batchSize) {
+        const batch = files.slice(i, i + batchSize);
+        await Promise.all(
+          batch.map((_, batchIndex) => uploadImage(i + batchIndex, 0, uploadState))
+        );
 
-        try {
-          const response = await fetch('/api/generate-images', {
-            method: 'POST',
-            body: formData,
-          });
-
-          if (!response.ok) {
-            throw new Error(`Error uploading image ${i + 1}`);
+        // Update progress toast
+        toast.loading(
+          <div className="flex flex-col space-y-2">
+            <div className="font-medium">Duke ngarkuar imazhet...</div>
+            <div className="text-sm opacity-90">
+              {uploadState.uploadResults.length} nga {files.length} imazhe të ngarkuara
+            </div>
+          </div>,
+          {
+            id: loadingToast,
+            position: 'top-center',
+            style: {
+              background: '#EFF6FF',
+              color: '#1E40AF',
+              padding: '16px',
+              borderRadius: '10px',
+              minWidth: '300px',
+            },
           }
+        );
 
-          const result = await response.json();
-          uploadResults.push(result);
-          
-          if (!sessionId && result.sessionId) {
-            sessionId = result.sessionId;
-          }
-
-          // Update progress toast
-          const progress = ((i + 1) / totalFiles) * 100;
-          toast.loading(
-            <div className="flex flex-col space-y-2">
-              <div className="font-medium">Duke ngarkuar imazhet...</div>
-              <div className="text-sm opacity-90">
-                Imazhi {i + 1} nga {totalFiles} ({Math.round(progress)}%)
-              </div>
-              <div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-blue-600 transition-all duration-500" 
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <div className="text-xs text-gray-500 mt-1">
-                {i + 1} imazhe të ngarkuara
-              </div>
-            </div>,
-            {
-              id: loadingToast,
-              position: 'top-center',
-              style: {
-                background: '#EFF6FF',
-                color: '#1E40AF',
-                padding: '16px',
-                borderRadius: '10px',
-                minWidth: '300px',
-              },
-            }
-          );
-        } catch (error) {
-          console.error(`Error uploading image ${i + 1}:`, error);
-          // Continue with next image even if one fails
-          toast.error(
-            <div className="flex flex-col space-y-1">
-              <div className="font-medium">Gabim gjatë ngarkimit të imazhit {i + 1}</div>
-              <div className="text-sm">Duke vazhduar me imazhet e tjera...</div>
-            </div>,
-            {
-              duration: 3000,
-              position: 'top-center',
-              style: {
-                background: '#FEE2E2',
-                color: '#991B1B',
-                padding: '16px',
-                borderRadius: '10px',
-              },
-            }
-          );
+        // Add a delay between batches
+        if (i + batchSize < files.length) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
         }
       }
 
-      toast.success(
-        <div className="flex flex-col space-y-1">
-          <div className="font-medium">Imazhet u ngarkuan me sukses! 🎨</div>
-          <div className="text-sm">Do të merrni një email sapo të përfundojë përpunimi.</div>
-        </div>,
-        {
-          duration: 5000,
-          position: 'top-center',
-          style: {
-            background: '#ECFDF5',
-            color: '#065F46',
-            padding: '16px',
-            borderRadius: '10px',
-            minWidth: '300px',
-          },
+      // Handle retries with increasing delays
+      while (uploadState.failedUploads.length > 0) {
+        const { index, retries } = uploadState.failedUploads.shift()!;
+        const success = await uploadImage(index, retries, uploadState);
+        if (!success && retries < maxRetries) {
+          uploadState.failedUploads.push({ index, retries: retries + 1 });
         }
-      );
+      }
 
-      // Trigger confetti
-      setShowConfetti(true);
+      if (uploadState.uploadResults.length === files.length) {
+        // Dismiss all toasts before showing success
+        toast.dismiss();
+        
+        toast.success(
+          <div className="flex flex-col space-y-1">
+            <div className="font-medium">Imazhet u ngarkuan me sukses! 🎨</div>
+            <div className="text-sm">Do të merrni një email sapo të përfundojë përpunimi.</div>
+          </div>,
+          {
+            duration: 5000,
+            position: 'top-center',
+            style: {
+              background: '#ECFDF5',
+              color: '#065F46',
+              padding: '16px',
+              borderRadius: '10px',
+              minWidth: '300px',
+            },
+          }
+        );
 
-      // Reset form
-      setFiles([]);
-      setImagePreviews([]);
-      setName('');
-      setEmail('');
-      setStyleStrength('standard');
-      setWatermark(false);
+        setShowConfetti(true);
+        setFiles([]);
+        setImagePreviews([]);
+        setName('');
+        setEmail('');
+        setStyleStrength('standard');
+        setWatermark(false);
+      } else {
+        toast.error(
+          <div className="flex flex-col space-y-1">
+            <div className="font-medium">Disa imazhe nuk u ngarkuan</div>
+            <div className="text-sm">U ngarkuan {uploadState.uploadResults.length} nga {files.length} imazhe.</div>
+          </div>,
+          {
+            duration: 7000,
+            position: 'top-center',
+            style: {
+              background: '#FEE2E2',
+              color: '#991B1B',
+              padding: '16px',
+              borderRadius: '10px',
+            },
+          }
+        );
+      }
     } catch (error) {
       console.error('Error:', error);
       toast.error(
@@ -508,12 +661,9 @@ const ImageUploadForm = () => {
             color: '#991B1B',
             padding: '16px',
             borderRadius: '10px',
-            minWidth: '300px',
           },
         }
       );
-    } finally {
-      toast.dismiss(loadingToast);
     }
   };
 
