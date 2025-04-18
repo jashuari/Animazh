@@ -380,7 +380,6 @@ const ImageUploadForm = () => {
     );
 
     try {
-      // Upload files in chunks of 2 to stay under the 1MB limit
       const chunkSize = 2;
       const chunks = [];
       for (let i = 0; i < files.length; i += chunkSize) {
@@ -392,19 +391,11 @@ const ImageUploadForm = () => {
       const uploadResults = [];
 
       for (let i = 0; i < chunks.length; i++) {
-        // Get a fresh reCAPTCHA token for each chunk if not in development
-        let currentRecaptchaToken = '';
-        if (!isLocalhost && recaptchaRef.current) {
-          recaptchaRef.current.reset();
-          const token = await recaptchaRef.current.executeAsync();
-          currentRecaptchaToken = token || '';
-        }
-
         const chunk = chunks[i];
         const formData = new FormData();
         formData.append('name', name);
         formData.append('email', email);
-        formData.append('recaptchaToken', currentRecaptchaToken || '');
+        formData.append('recaptchaToken', recaptchaValue || '');
         chunk.forEach((file, index) => {
           formData.append(`image${i * chunkSize + index}`, file);
         });
@@ -414,7 +405,6 @@ const ImageUploadForm = () => {
         formData.append('totalChunks', chunks.length.toString());
         formData.append('totalImages', files.length.toString());
         
-        // Add session ID if we have one from previous chunks
         if (sessionId) {
           formData.append('sessionId', sessionId);
         }
@@ -431,7 +421,6 @@ const ImageUploadForm = () => {
         const result = await response.json();
         uploadResults.push(result);
         
-        // Store session ID from first chunk
         if (!sessionId && result.sessionId) {
           sessionId = result.sessionId;
         }
@@ -466,6 +455,12 @@ const ImageUploadForm = () => {
             },
           }
         );
+      }
+
+      // Reset reCAPTCHA after successful upload
+      if (!isLocalhost && recaptchaRef.current) {
+        recaptchaRef.current.reset();
+        setRecaptchaValue(null);
       }
 
       toast.success(
@@ -1087,6 +1082,7 @@ const ImageUploadForm = () => {
               sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || ''}
               onChange={(value) => setRecaptchaValue(value)}
               theme="light"
+              size="normal"
             />
           </div>
         )}
