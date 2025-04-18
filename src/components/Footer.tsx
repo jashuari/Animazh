@@ -10,7 +10,7 @@ const Footer = () => {
         <div className="flex flex-col md:flex-row justify-between mb-8">
           <div className="mb-8 md:mb-0">
             <Link href="/" className="flex items-center mb-4">
-              <Logo className="text-blue-600" />
+          
               <span className="ml-2 font-semibold">Animazh.com</span>
             </Link>
             <p className="text-sm text-gray-500">

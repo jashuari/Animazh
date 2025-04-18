@@ -9,7 +9,7 @@ const Header = () => {
       <div className="container flex h-16 items-center justify-between px-4 md:px-6">
         <div className="flex items-center space-x-4">
           <Link href="/" className="flex items-center space-x-2">
-            <Logo className="text-blue-600" />
+            
             <span className="font-semibold">Animazh.com</span>
           </Link>
         </div>
