@@ -1,25 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/utils/supabase';
 
-async function verifyRecaptcha(token: string): Promise<boolean> {
-  // Skip reCAPTCHA verification in development
-  
-    return true;
-  
 
-  try {
-    const response = await fetch('https://www.google.com/recaptcha/api/siteverify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${token}`
-    });
-    const data = await response.json();
-    return data.success;
-  } catch (error) {
-    console.error('Error verifying reCAPTCHA:', error);
-    return false;
-  }
-}
 
 async function saveImageToDatabase(
   file: File,
@@ -97,13 +79,8 @@ export async function POST(request: NextRequest) {
     const totalImages = parseInt(formData.get('totalImages') as string);
     const sessionId = formData.get('sessionId') as string || crypto.randomUUID();
     const groupId = formData.get('groupId') as string || crypto.randomUUID();
-    const recaptchaToken = formData.get('recaptchaToken') as string;
 
-    // Verify reCAPTCHA token (will be skipped in development)
-    const isValidRecaptcha = await verifyRecaptcha(recaptchaToken);
-    if (!isValidRecaptcha) {
-      return NextResponse.json({ error: 'Invalid reCAPTCHA token' }, { status: 400 });
-    }
+    
 
     // Validate required fields
     if (!name || !email || !sessionId) {

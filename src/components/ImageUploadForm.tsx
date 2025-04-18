@@ -5,7 +5,6 @@ import Image from 'next/image';
 import { CheckIcon } from '@heroicons/react/24/outline';
 import toast, { Toaster } from 'react-hot-toast';
 import ReactConfetti from 'react-confetti';
-import ReCAPTCHA from 'react-google-recaptcha';
 
 const styles = `
   @keyframes progress {
@@ -29,10 +28,8 @@ const ImageUploadForm = () => {
   const [currentTopTestimonial, setCurrentTopTestimonial] = useState(0);
   const [showConfetti, setShowConfetti] = useState(false);
   const [windowDimensions, setWindowDimensions] = useState({ width: 0, height: 0 });
-  const [recaptchaValue, setRecaptchaValue] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
-  const recaptchaRef = useRef<ReCAPTCHA>(null);
   const isLocalhost = process.env.NODE_ENV === 'development';
 
   const topTestimonials = [
@@ -339,11 +336,11 @@ const ImageUploadForm = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!files.length || !name || !email || (!recaptchaValue && !isLocalhost)) {
+    if (!files.length || !name || !email) {
       toast.error(
         <div className="flex flex-col space-y-1">
           <div className="font-medium">Ju lutem plotësoni të gjitha fushat e kërkuara</div>
-          <div className="text-sm">{!recaptchaValue && !isLocalhost ? "Ju lutem verifikoni që nuk jeni robot" : "Plotësoni të gjitha fushat"}</div>
+          <div className="text-sm">Plotësoni të gjitha fushat</div>
         </div>,
         {
           duration: 4000,
@@ -395,7 +392,6 @@ const ImageUploadForm = () => {
         const formData = new FormData();
         formData.append('name', name);
         formData.append('email', email);
-        formData.append('recaptchaToken', recaptchaValue || '');
         chunk.forEach((file, index) => {
           formData.append(`image${i * chunkSize + index}`, file);
         });
@@ -455,12 +451,6 @@ const ImageUploadForm = () => {
             },
           }
         );
-      }
-
-      // Reset reCAPTCHA after successful upload
-      if (!isLocalhost && recaptchaRef.current) {
-        recaptchaRef.current.reset();
-        setRecaptchaValue(null);
       }
 
       toast.success(
@@ -1073,19 +1063,6 @@ const ImageUploadForm = () => {
             />
           </div>
         </div>
-
-        {/* Only show reCAPTCHA in production */}
-        {!isLocalhost && (
-          <div className="flex justify-center mb-4">
-            <ReCAPTCHA
-              ref={recaptchaRef}
-              sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || ''}
-              onChange={(value) => setRecaptchaValue(value)}
-              theme="light"
-              size="normal"
-            />
-          </div>
-        )}
 
         <button
           type="submit"
