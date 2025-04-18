@@ -392,11 +392,19 @@ const ImageUploadForm = () => {
       const uploadResults = [];
 
       for (let i = 0; i < chunks.length; i++) {
+        // Get a fresh reCAPTCHA token for each chunk if not in development
+        let currentRecaptchaToken = '';
+        if (!isLocalhost && recaptchaRef.current) {
+          recaptchaRef.current.reset();
+          const token = await recaptchaRef.current.executeAsync();
+          currentRecaptchaToken = token || '';
+        }
+
         const chunk = chunks[i];
         const formData = new FormData();
         formData.append('name', name);
         formData.append('email', email);
-        formData.append('recaptchaToken', recaptchaValue || '');
+        formData.append('recaptchaToken', currentRecaptchaToken || '');
         chunk.forEach((file, index) => {
           formData.append(`image${i * chunkSize + index}`, file);
         });
