@@ -377,80 +377,92 @@ const ImageUploadForm = () => {
     );
 
     try {
-      const chunkSize = 2;
-      const chunks = [];
-      for (let i = 0; i < files.length; i += chunkSize) {
-        const chunk = files.slice(i, i + chunkSize);
-        chunks.push(chunk);
-      }
-
+      // Upload one image at a time to avoid payload size issues
       let sessionId = '';
       const uploadResults = [];
+      const totalFiles = files.length;
 
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
+      for (let i = 0; i < totalFiles; i++) {
         const formData = new FormData();
         formData.append('name', name);
         formData.append('email', email);
-        chunk.forEach((file, index) => {
-          formData.append(`image${i * chunkSize + index}`, file);
-        });
+        formData.append(`image${i}`, files[i]);
         formData.append('styleStrength', styleStrength);
         formData.append('watermark', watermark.toString());
-        formData.append('chunkIndex', i.toString());
-        formData.append('totalChunks', chunks.length.toString());
-        formData.append('totalImages', files.length.toString());
+        formData.append('imageIndex', i.toString());
+        formData.append('totalImages', totalFiles.toString());
         
         if (sessionId) {
           formData.append('sessionId', sessionId);
         }
 
-        const response = await fetch('/api/generate-images', {
-          method: 'POST',
-          body: formData,
-        });
+        try {
+          const response = await fetch('/api/generate-images', {
+            method: 'POST',
+            body: formData,
+          });
 
-        if (!response.ok) {
-          throw new Error(`Error uploading chunk ${i + 1}`);
-        }
-
-        const result = await response.json();
-        uploadResults.push(result);
-        
-        if (!sessionId && result.sessionId) {
-          sessionId = result.sessionId;
-        }
-
-        // Update progress toast
-        const progress = ((i + 1) / chunks.length) * 100;
-        toast.loading(
-          <div className="flex flex-col space-y-2">
-            <div className="font-medium">Duke ngarkuar imazhet...</div>
-            <div className="text-sm opacity-90">
-              Chunk {i + 1} nga {chunks.length} ({Math.round(progress)}%)
-            </div>
-            <div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-blue-600 transition-all duration-500" 
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-            <div className="text-xs text-gray-500 mt-1">
-              {result.processedChunks?.length || 0} chunks processed
-            </div>
-          </div>,
-          {
-            id: loadingToast,
-            position: 'top-center',
-            style: {
-              background: '#EFF6FF',
-              color: '#1E40AF',
-              padding: '16px',
-              borderRadius: '10px',
-              minWidth: '300px',
-            },
+          if (!response.ok) {
+            throw new Error(`Error uploading image ${i + 1}`);
           }
-        );
+
+          const result = await response.json();
+          uploadResults.push(result);
+          
+          if (!sessionId && result.sessionId) {
+            sessionId = result.sessionId;
+          }
+
+          // Update progress toast
+          const progress = ((i + 1) / totalFiles) * 100;
+          toast.loading(
+            <div className="flex flex-col space-y-2">
+              <div className="font-medium">Duke ngarkuar imazhet...</div>
+              <div className="text-sm opacity-90">
+                Imazhi {i + 1} nga {totalFiles} ({Math.round(progress)}%)
+              </div>
+              <div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-blue-600 transition-all duration-500" 
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                {i + 1} imazhe të ngarkuara
+              </div>
+            </div>,
+            {
+              id: loadingToast,
+              position: 'top-center',
+              style: {
+                background: '#EFF6FF',
+                color: '#1E40AF',
+                padding: '16px',
+                borderRadius: '10px',
+                minWidth: '300px',
+              },
+            }
+          );
+        } catch (error) {
+          console.error(`Error uploading image ${i + 1}:`, error);
+          // Continue with next image even if one fails
+          toast.error(
+            <div className="flex flex-col space-y-1">
+              <div className="font-medium">Gabim gjatë ngarkimit të imazhit {i + 1}</div>
+              <div className="text-sm">Duke vazhduar me imazhet e tjera...</div>
+            </div>,
+            {
+              duration: 3000,
+              position: 'top-center',
+              style: {
+                background: '#FEE2E2',
+                color: '#991B1B',
+                padding: '16px',
+                borderRadius: '10px',
+              },
+            }
+          );
+        }
       }
 
       toast.success(
