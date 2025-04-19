@@ -879,37 +879,36 @@ const ImageUploadForm = () => {
               <div className="text-center">
                 <div className="text-2xl font-bold text-blue-600">FALAS</div>
                 <div className="text-gray-600">1 foto</div>
+                <div className="text-sm text-blue-600 font-medium mt-1">E disponueshme</div>
               </div>
             </div>
 
             <div 
-              className={`p-4 border-2 rounded-xl cursor-pointer transition-all ${
-                selectedPackage === '5' 
-                  ? 'border-purple-500 bg-purple-50' 
-                  : 'border-gray-200 hover:border-purple-300'
-              }`}
-              onClick={() => setSelectedPackage('5')}
+              className="p-4 border-2 border-gray-200 rounded-xl relative overflow-hidden bg-gradient-to-br from-purple-50 to-white"
             >
-              <div className="text-center">
-                <div className="text-2xl font-bold text-purple-600">3€</div>
-                <div className="text-gray-600">5 foto</div>
-                <div className="text-sm text-purple-600 font-medium">Zbritje 40%</div>
+              <div className="absolute -right-12 top-4 rotate-45 bg-purple-500 text-white px-12 py-1 text-sm font-medium shadow-lg">
+                Së Shpejti
               </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-purple-400">3€</div>
+                <div className="text-gray-400">5 foto</div>
+                <div className="text-sm text-purple-400 font-medium">Zbritje 40%</div>
+              </div>
+              <div className="absolute inset-0 bg-white/50"></div>
             </div>
 
             <div 
-              className={`p-4 border-2 rounded-xl cursor-pointer transition-all ${
-                selectedPackage === '10' 
-                  ? 'border-pink-500 bg-pink-50' 
-                  : 'border-gray-200 hover:border-pink-300'
-              }`}
-              onClick={() => setSelectedPackage('10')}
+              className="p-4 border-2 border-gray-200 rounded-xl relative overflow-hidden bg-gradient-to-br from-pink-50 to-white"
             >
-              <div className="text-center">
-                <div className="text-2xl font-bold text-pink-600">5€</div>
-                <div className="text-gray-600">10 foto</div>
-                <div className="text-sm text-pink-600 font-medium">Zbritje 50%</div>
+              <div className="absolute -right-12 top-4 rotate-45 bg-pink-500 text-white px-12 py-1 text-sm font-medium shadow-lg">
+                Së Shpejti
               </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-pink-400">5€</div>
+                <div className="text-gray-400">10 foto</div>
+                <div className="text-sm text-pink-400 font-medium">Zbritje 50%</div>
+              </div>
+              <div className="absolute inset-0 bg-white/50"></div>
             </div>
           </div>
 
